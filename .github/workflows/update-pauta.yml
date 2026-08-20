@@ -28,6 +28,7 @@ jobs:
         env:
           META_PCOM_TOKEN:      ${{ secrets.META_PCOM_TOKEN }}
           META_PCOM_AD_ACCOUNT: ${{ secrets.META_PCOM_AD_ACCOUNT }}
+          DATABASE_URL:         ${{ secrets.DATABASE_URL }}
           NEON_DATABASE_URL:    ${{ secrets.NEON_DATABASE_URL }}
         run: |
           cd pauta-propiedades

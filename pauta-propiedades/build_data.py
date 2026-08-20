@@ -14,7 +14,8 @@ Fuentes:
 Variables de entorno:
   META_PCOM_TOKEN        token de sistema con acceso a la cuenta de pauta
   META_PCOM_AD_ACCOUNT   act_XXXXXXXX de la cuenta de Propiedades.com
-  NEON_DATABASE_URL      conexión al ledger de eventos (bitácora); opcional
+  DATABASE_URL           conexión al ledger de eventos (bitácora); opcional. Si falta,
+                         se usa NEON_DATABASE_URL (misma precedencia que el motor)
 """
 import datetime
 import json
@@ -170,12 +171,11 @@ def leads_prepost(mb_rows, ad_start, today):
 # ---------- Ledger de eventos (Neon) ----------
 def fetch_bitacora(limite=200):
     """Últimos eventos del ledger + resumen por tipo. Falla suave."""
-    url = os.environ.get("NEON_DATABASE_URL", "")
-    if not url:
-        print("  ⚠ NEON_DATABASE_URL ausente; bitácora vacía")
+    import ledger
+    if not ledger.db_url():
+        print("  ⚠ DATABASE_URL / NEON_DATABASE_URL ausente; bitácora vacía")
         return {"eventos": [], "resumen": {}}
     try:
-        import ledger
         conn = ledger.connect()
         with conn.cursor() as cur:
             cur.execute(f"""

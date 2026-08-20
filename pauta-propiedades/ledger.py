@@ -14,10 +14,16 @@ SCHEMA = os.environ.get("PAUTA_SCHEMA", "pauta")
 TIPOS = {"CREATED", "ACTIVATED", "PAUSED", "DELETED", "BUDGET_CHANGED"}
 
 
+def db_url():
+    """DATABASE_URL manda sobre NEON_DATABASE_URL — misma precedencia que config.db_url()
+    del motor, para que el cutover a Supabase sea agregar la var y el rollback borrarla."""
+    return os.environ.get("DATABASE_URL") or os.environ.get("NEON_DATABASE_URL", "")
+
+
 def connect():
-    url = os.environ.get("NEON_DATABASE_URL", "")
+    url = db_url()
     if not url:
-        raise RuntimeError("NEON_DATABASE_URL no definido")
+        raise RuntimeError("DATABASE_URL / NEON_DATABASE_URL no definido")
     return psycopg.connect(url)
 
 

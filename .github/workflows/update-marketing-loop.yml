@@ -32,6 +32,7 @@ jobs:
           INFOBIP_CO_API_KEY: ${{ secrets.INFOBIP_CO_API_KEY }}
           GH_READ_TOKEN:      ${{ secrets.GH_READ_TOKEN }}
           META_ACCESS_TOKEN:  ${{ secrets.META_ACCESS_TOKEN }}
+          DATABASE_URL:       ${{ secrets.DATABASE_URL }}
           NEON_DATABASE_URL:  ${{ secrets.NEON_DATABASE_URL }}
         run: |
           cd marketing-loop
