@@ -1,8 +1,18 @@
-name: Actualizar Marketing Loop (10 min)
+name: Actualizar Marketing Loop (respaldo diario)
+
+# RESPALDO del refresh local: el ciclo diario corre a las 9:30 America/Bogota en el Mac
+# de Nicolas y pushea data.json a pool-ab-view. Este cron corre ~1h despues (15:30 UTC
+# = 10:30 Bogota) y solo commitea si data.json cambio, asi que si el Mac ya corrio,
+# este job termina sin tocar nada. Si el Mac fallo, este job evita que el tablero se congele.
+#
+# OJO: los crons de Actions solo disparan desde la rama DEFAULT del repo. El tablero vive
+# en pool-ab-view (GitHub Pages sirve esa rama), por eso el job hace checkout explicito de
+# pool-ab-view sin importar desde que rama corra la definicion. Mantener este archivo
+# identico en main y pool-ab-view.
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '30 15 * * *'   # 10:30 America/Bogota (UTC-5), 1h despues del ciclo local
   workflow_dispatch:
 
 concurrency:
@@ -15,10 +25,29 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Verificar secrets (fallar claro, no fingir refresh)
+        env:
+          HAS_DATABASE_URL: ${{ secrets.DATABASE_URL != '' }}
+          HAS_GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS != '' }}
+          HAS_GCP_PROJECT: ${{ secrets.GCP_PROJECT != '' }}
+        run: |
+          ok=1
+          [ "$HAS_DATABASE_URL" = "true" ] || { echo "::error::Falta el secret DATABASE_URL (Neon). Sin el no hay refresh."; ok=0; }
+          if [ "$HAS_GCP_CREDENTIALS" != "true" ] || [ "$HAS_GCP_PROJECT" != "true" ]; then
+            echo "::error::Faltan GCP_CREDENTIALS y/o GCP_PROJECT. build_data.py degrada en silencio las secciones de BigQuery (quedan vacias y PISAN los datos buenos del tablero), asi que este job prefiere fallar a publicar un data.json mutilado."
+            echo "::error::Como generarlos: en GCP crear/usar una service account con BigQuery Job User en sellers-main-prod y BigQuery Data Viewer sobre los datasets papyrus-master.infobib_gold_{mx,co}; descargar la key JSON y subirla con: gh secret set GCP_CREDENTIALS < key.json ; gh secret set GCP_PROJECT --body sellers-main-prod"
+            ok=0
+          fi
+          [ "$ok" = "1" ] || exit 1
+
       - uses: actions/checkout@v4
+        with:
+          ref: pool-ab-view      # rama viva del tablero (GitHub Pages sirve de aqui)
+          fetch-depth: 0
+
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Authenticate with user credentials
+      - name: Autenticar bq con GCP_CREDENTIALS
         run: |
           echo '${{ secrets.GCP_CREDENTIALS }}' > /tmp/adc.json
           gcloud config set project ${{ secrets.GCP_PROJECT }}
@@ -32,6 +61,7 @@ jobs:
           INFOBIP_CO_API_KEY: ${{ secrets.INFOBIP_CO_API_KEY }}
           GH_READ_TOKEN:      ${{ secrets.GH_READ_TOKEN }}
           META_ACCESS_TOKEN:  ${{ secrets.META_ACCESS_TOKEN }}
+          DATABASE_URL:       ${{ secrets.DATABASE_URL }}
           NEON_DATABASE_URL:  ${{ secrets.NEON_DATABASE_URL }}
         run: |
           cd marketing-loop
@@ -39,16 +69,32 @@ jobs:
           pip install "psycopg[binary]"
           python3 build_data.py
 
-      - name: Commit and push
+      - name: Sanidad del data.json (no publicar un refresh mutilado)
+        run: |
+          python3 - <<'EOF'
+          import json, sys
+          d = json.load(open('marketing-loop/data.json'))
+          problemas = []
+          if not d.get('updated'): problemas.append('updated vacio')
+          # embudo/diario salen de Neon+BQ; si quedaron vacios el build degrado en silencio
+          for k in ('embudo', 'diario', 'contact_status'):
+              if not d.get(k): problemas.append(f'{k} vacio')
+          if problemas:
+              print('::error::data.json salio degradado: ' + ', '.join(problemas))
+              sys.exit(1)
+          print('data.json OK:', len(d), 'secciones, updated =', d['updated'])
+          EOF
+
+      - name: Commit y push (solo si cambio)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add marketing-loop/data.json
-          if git diff --staged --quiet; then echo "sin cambios"; exit 0; fi
-          git commit -m "Auto-update marketing-loop data.json $(date -u +%Y-%m-%dT%H:%MZ)"
+          if git diff --staged --quiet; then echo "sin cambios (el ciclo local ya refresco hoy)"; exit 0; fi
+          git commit -m "data: refresh automatico (respaldo Actions) $(date -u +%Y-%m-%dT%H:%MZ)"
           for i in 1 2 3 4 5; do
-            if git push; then echo "push OK"; exit 0; fi
-            git fetch origin main; git rebase -X ours origin/main || { git rebase --abort; git reset --hard origin/main; git checkout origin/main -- .; }
-            git add marketing-loop/data.json; git diff --staged --quiet || git commit -m "Auto-update marketing-loop data.json $(date -u +%Y-%m-%dT%H:%MZ)"
+            if git push origin HEAD:pool-ab-view; then echo "push OK"; exit 0; fi
+            git fetch origin pool-ab-view
+            git rebase origin/pool-ab-view || { git rebase --abort; exit 1; }
           done
-          echo "no se pudo pushear"; exit 1
+          echo "::error::no se pudo pushear tras 5 intentos"; exit 1
